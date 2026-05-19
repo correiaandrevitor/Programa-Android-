@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from "react";
+
 import {
   View,
   Text,
@@ -10,159 +11,165 @@ import {
   ActivityIndicator,
   SafeAreaView,
   Linking,
-} from 'react-native';
+  ScrollView,
+  KeyboardAvoidingView,
+  Platform,
+  useWindowDimensions
+} from "react-native";
 
-import * as SQLite from 'expo-sqlite';
-import Hashes from 'jshashes';
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 
 // ================= HASH =================
 
-const SHA256 = new Hashes.SHA256();
+const SECRET="@MinhaChave123";
 
-const SECRET_KEY = '@MinhaChave123';
+function hash(text){
 
-const hash = text =>
-  SHA256.hex(text + SECRET_KEY);
+let h=0;
 
+const str=text+SECRET;
 
-// ================= SQLITE =================
+for(let i=0;i<str.length;i++){
 
-const db = SQLite.openDatabaseSync('app.db');
+h=((h<<5)-h)+str.charCodeAt(i);
 
+h|=0;
 
-// ================= INIT DATABASE =================
-
-function initDB() {
-  try {
-
-    db.execSync(`
-
-      CREATE TABLE IF NOT EXISTS users(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT UNIQUE,
-        password TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS orcamentos(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        quantidade TEXT,
-        precoUnitario TEXT,
-        total TEXT
-      );
-
-    `);
-
-    console.log("Banco iniciado");
-
-  } catch(error) {
-
-    console.log(
-      "Erro DB:",
-      error
-    );
-
-  }
 }
+
+return Math.abs(h).toString();
+
+}
+
+
+// ================= DATABASE =================
+
+const DB={
+
+async get(key){
+
+try{
+
+const value=
+await AsyncStorage.getItem(key);
+
+return value
+?JSON.parse(value)
+:[];
+
+}catch{
+
+return[];
+
+}
+
+},
+
+async save(key,data){
+
+await AsyncStorage.setItem(
+key,
+JSON.stringify(data)
+);
+
+}
+
+};
 
 
 // ================= AUTH =================
 
-const Auth = {
+const Auth={
 
-register(email,password){
+async register(email,password){
 
-try{
+let users=
+await DB.get("users");
 
-db.runSync(
-
-`INSERT INTO users
-(email,password)
-
-VALUES (?,?)`,
-
-[
-email,
-hash(password)
-]
-
+const exists=
+users.find(
+u=>u.email===email
 );
 
-return true;
+if(exists){
+
+throw Error();
 
 }
-catch{
 
-throw new Error();
+users.push({
 
-}
+id:Date.now(),
+
+email,
+
+password:
+hash(password)
+
+});
+
+await DB.save(
+"users",
+users
+);
 
 },
 
+async login(email,password){
 
-login(email,password){
+let users=
+await DB.get("users");
 
-const result=
+const user=
+users.find(
 
-db.getAllSync(
+u=>
 
-`SELECT * FROM users
-WHERE email=?
-AND password=?`,
+u.email===email &&
 
-[
-email,
+u.password===
 hash(password)
-]
 
 );
 
-return result.length>0;
+return !!user;
 
 }
 
 };
 
 
-// ================= ORÇAMENTOS =================
+// ================= ORÇAMENTO =================
 
 const Orcamento={
 
-save(item){
+async save(item){
 
-db.runSync(
+let lista=
+await DB.get(
+"orcamentos"
+);
 
-`
-INSERT INTO orcamentos(
-quantidade,
-precoUnitario,
-total
-)
+lista.unshift({
 
-VALUES(?,?,?)
-`,
+id:Date.now(),
 
-[
-item.quantidade,
-item.precoUnitario,
-item.total
-]
+...item
 
+});
+
+await DB.save(
+"orcamentos",
+lista
 );
 
 },
 
+async list(){
 
-list(){
-
-return db.getAllSync(
-
-`
-SELECT *
-FROM orcamentos
-ORDER BY id DESC
-`
-
+return await DB.get(
+"orcamentos"
 );
 
 }
@@ -170,32 +177,31 @@ ORDER BY id DESC
 };
 
 
-// ================= LOGIN SCREEN =================
+// ================= LOGIN =================
 
 function LoginScreen({onLogin}){
+
+const {width}=useWindowDimensions();
 
 const[email,setEmail]=
 useState("");
 
-const[pass,setPass]=
+const[password,setPassword]=
 useState("");
 
 const[confirm,setConfirm]=
 useState("");
 
-const[loading,setLoading]=
-useState(false);
-
 const[isLogin,setIsLogin]=
 useState(true);
+
+const[loading,setLoading]=
+useState(false);
 
 
 async function handle(){
 
-if(
-!email ||
-!pass
-){
+if(!email||!password){
 
 Alert.alert(
 "Erro",
@@ -206,17 +212,16 @@ return;
 
 }
 
-
 setLoading(true);
 
 
 if(!isLogin){
 
-if(pass!==confirm){
+if(password!==confirm){
 
 Alert.alert(
 "Erro",
-"Senhas diferentes"
+"As senhas são diferentes"
 );
 
 setLoading(false);
@@ -227,9 +232,9 @@ return;
 
 try{
 
-Auth.register(
+await Auth.register(
 email,
-pass
+password
 );
 
 Alert.alert(
@@ -237,10 +242,12 @@ Alert.alert(
 "Conta criada"
 );
 
+setEmail("");
+setPassword("");
+setConfirm("");
 setIsLogin(true);
 
-}
-catch{
+}catch{
 
 Alert.alert(
 "Erro",
@@ -257,9 +264,9 @@ return;
 
 
 const ok=
-Auth.login(
+await Auth.login(
 email,
-pass
+password
 );
 
 setLoading(false);
@@ -283,8 +290,38 @@ Alert.alert(
 
 return(
 
-<View style={styles.container}>
+<KeyboardAvoidingView
 
+style={styles.flex}
+
+behavior={
+Platform.OS==="ios"
+?"padding"
+:"height"
+}
+
+>
+
+<ScrollView
+
+contentContainerStyle={{
+
+flexGrow:1,
+
+justifyContent:"center",
+
+padding:
+width<400
+?20
+:30
+
+}}
+
+keyboardShouldPersistTaps="handled"
+
+style={styles.container}
+
+>
 
 <Text style={styles.title}>
 Etiquetas
@@ -294,7 +331,6 @@ Etiquetas
 <TextInput
 style={styles.input}
 placeholder="Email"
-keyboardType="email-address"
 autoCapitalize="none"
 value={email}
 onChangeText={setEmail}
@@ -305,13 +341,13 @@ onChangeText={setEmail}
 style={styles.input}
 placeholder="Senha"
 secureTextEntry
-value={pass}
-onChangeText={setPass}
+value={password}
+onChangeText={setPassword}
 />
 
 
 {
-!isLogin && (
+!isLogin&&(
 
 <TextInput
 style={styles.input}
@@ -330,20 +366,23 @@ style={styles.button}
 onPress={handle}
 >
 
-{loading?
+{
+loading
 
-<ActivityIndicator color="#fff"/>
+?
+
+<ActivityIndicator
+color="#fff"
+/>
 
 :
 
 <Text style={styles.btnText}>
-
-{isLogin
-?
-"ENTRAR"
-:
-"CADASTRAR"}
-
+{
+isLogin
+?"ENTRAR"
+:"CADASTRAR"
+}
 </Text>
 
 }
@@ -360,35 +399,47 @@ setIsLogin(
 >
 
 <Text style={styles.link}>
-
 {
 isLogin
-?
-"Criar conta"
-:
-"Já tenho conta"
+?"Criar conta"
+:"Já tenho conta"
 }
-
 </Text>
 
 </TouchableOpacity>
 
+</ScrollView>
 
-</View>
+</KeyboardAvoidingView>
 
 )
 
 }
 
 
+
 // ================= HOME =================
 
 function Home({onLogout}){
+
+const {width}=useWindowDimensions();
 
 const[qtd,setQtd]=
 useState("");
 
 const[preco,setPreco]=
+useState("");
+
+const[tamanho,setTamanho]=
+useState("");
+
+const[material,setMaterial]=
+useState("");
+
+const[impressao,setImpressao]=
+useState("");
+
+const[obs,setObs]=
 useState("");
 
 const[list,setList]=
@@ -402,10 +453,10 @@ load();
 },[]);
 
 
-function load(){
+async function load(){
 
 const dados=
-Orcamento.list();
+await Orcamento.list();
 
 setList(dados);
 
@@ -414,46 +465,73 @@ setList(dados);
 
 const total=(
 
-(
 (+qtd||0)
 *
 (+preco||0)
-)
 
-.toFixed(2)
-
-);
+).toFixed(2);
 
 
-function salvar(){
 
-if(
-!qtd ||
-!preco
-){
+async function salvar(){
+
+if(!qtd||!preco){
 
 Alert.alert(
-"Atenção",
-"Preencha os campos"
+"Erro",
+"Preencha quantidade e preço"
 );
 
 return;
 
 }
 
-
-Orcamento.save({
+await Orcamento.save({
 
 quantidade:qtd,
+
 precoUnitario:preco,
+
+tamanho,
+
+material,
+
+impressao,
+
+obs,
+
 total
 
 });
 
 
 setQtd("");
-
 setPreco("");
+setTamanho("");
+setMaterial("");
+setImpressao("");
+setObs("");
+
+load();
+
+}
+
+
+
+async function remover(id){
+
+let lista=
+await Orcamento.list();
+
+lista=
+lista.filter(
+i=>i.id!==id
+);
+
+await DB.save(
+"orcamentos",
+lista
+);
 
 load();
 
@@ -464,51 +542,35 @@ function whatsapp(item){
 
 const msg=
 
-`Orçamento
+`*ORÇAMENTO DE ETIQUETA*
 
 Quantidade:
 ${item.quantidade}
 
-Total:
+Preço:
+R$ ${item.precoUnitario}
+
+Tamanho:
+${item.tamanho}
+
+Material:
+${item.material}
+
+Impressão:
+${item.impressao}
+
+Observação:
+${item.obs}
+
+TOTAL:
 R$ ${item.total}`;
 
-const url=
+Linking.openURL(
 
 `https://wa.me/?text=${
 encodeURIComponent(msg)
-}`;
+}`
 
-Linking.openURL(
-url
-);
-
-}
-
-
-function email(item){
-
-const msg=
-
-`Orçamento
-
-Quantidade:
-${item.quantidade}
-
-Total:
-R$ ${item.total}`;
-
-
-const url=
-
-`mailto:
-?subject=Orçamento
-&body=${
-encodeURIComponent(msg)
-}`;
-
-
-Linking.openURL(
-url
 );
 
 }
@@ -516,8 +578,34 @@ url
 
 return(
 
-<View style={styles.container}>
+<KeyboardAvoidingView
+style={styles.flex}
+behavior={
+Platform.OS==="ios"
+?"padding"
+:"height"
+}
+>
 
+<FlatList
+
+style={styles.container}
+
+ListHeaderComponent={
+
+<View>
+
+<View
+style={styles.header}
+>
+
+<Text
+style={styles.subtitle}
+>
+
+Novo orçamento
+
+</Text>
 
 <TouchableOpacity
 style={styles.logout}
@@ -529,6 +617,9 @@ SAIR
 </Text>
 
 </TouchableOpacity>
+
+</View>
+
 
 
 <TextInput
@@ -542,18 +633,48 @@ onChangeText={setQtd}
 
 <TextInput
 style={styles.input}
-placeholder="Preço"
+placeholder="Preço Unitário"
 keyboardType="numeric"
 value={preco}
 onChangeText={setPreco}
 />
 
 
+<TextInput
+style={styles.input}
+placeholder="Tamanho"
+value={tamanho}
+onChangeText={setTamanho}
+/>
+
+
+<TextInput
+style={styles.input}
+placeholder="Material"
+value={material}
+onChangeText={setMaterial}
+/>
+
+
+<TextInput
+style={styles.input}
+placeholder="Tipo impressão"
+value={impressao}
+onChangeText={setImpressao}
+/>
+
+
+<TextInput
+style={styles.input}
+placeholder="Observações"
+multiline
+value={obs}
+onChangeText={setObs}
+/>
+
+
 <Text style={styles.total}>
-
-Total:
 R$ {total}
-
 </Text>
 
 
@@ -568,33 +689,61 @@ SALVAR
 
 </TouchableOpacity>
 
+</View>
 
-<FlatList
+}
+
 data={list}
-keyExtractor={(item)=>
-item.id.toString()
+
+contentContainerStyle={{
+padding:
+width<400
+?15
+:20,
+
+paddingBottom:50
+}}
+
+keyExtractor={i=>
+i.id.toString()
 }
 
 renderItem={({item})=>(
 
 <View style={styles.card}>
 
-
-<Text>
-Qtd:
-{item.quantidade}
+<Text style={styles.valor}>
+R$ {item.total}
 </Text>
 
+<Text>
+Quantidade:
+{item.quantidade}
+</Text>
 
 <Text>
 Preço:
 R$ {item.precoUnitario}
 </Text>
 
+<Text>
+Tamanho:
+{item.tamanho}
+</Text>
 
 <Text>
-Total:
-R$ {item.total}
+Material:
+{item.material}
+</Text>
+
+<Text>
+Impressão:
+{item.impressao}
+</Text>
+
+<Text>
+Obs:
+{item.obs}
 </Text>
 
 
@@ -606,32 +755,52 @@ whatsapp(item)
 >
 
 <Text style={styles.btnText}>
-WhatsApp
+Enviar WhatsApp
 </Text>
 
 </TouchableOpacity>
 
 
 <TouchableOpacity
-style={styles.mail}
+
+style={styles.delete}
+
 onPress={()=>
-email(item)
+
+Alert.alert(
+"Excluir",
+"Deseja remover?",
+[
+{
+text:"Cancelar"
+},
+{
+text:"Remover",
+onPress:()=>
+remover(item.id)
 }
+]
+)
+
+}
+
 >
 
 <Text style={styles.btnText}>
-Email
+Remover orçamento
 </Text>
 
 </TouchableOpacity>
 
-
 </View>
 
 )}
+
+keyboardShouldPersistTaps="handled"
+
 />
 
-</View>
+</KeyboardAvoidingView>
 
 )
 
@@ -642,32 +811,29 @@ Email
 
 export default function App(){
 
-const[screen,setScreen]=
-useState("login");
-
-
-useEffect(()=>{
-
-initDB();
-
-},[]);
-
+const[
+screen,
+setScreen
+]=useState(
+"login"
+);
 
 return(
 
 <SafeAreaView
-style={{flex:1}}
+style={styles.flex}
 >
 
 {
-
 screen==="login"
 
 ?
 
 <LoginScreen
 onLogin={()=>
-setScreen("home")
+setScreen(
+"home"
+)
 }
 />
 
@@ -675,7 +841,9 @@ setScreen("home")
 
 <Home
 onLogout={()=>
-setScreen("login")
+setScreen(
+"login"
+)
 }
 />
 
@@ -688,84 +856,111 @@ setScreen("login")
 }
 
 
-// ================= STYLE =================
+// ================= STYLES =================
 
 const styles=StyleSheet.create({
 
+flex:{
+flex:1
+},
+
 container:{
 flex:1,
-padding:20,
 backgroundColor:"#C97B2A"
 },
 
 title:{
-fontSize:30,
+fontSize:32,
 fontWeight:"bold",
 color:"#fff",
 textAlign:"center",
 marginBottom:30
 },
 
+subtitle:{
+fontSize:25,
+fontWeight:"bold",
+color:"#fff"
+},
+
+header:{
+flexDirection:"row",
+justifyContent:"space-between",
+alignItems:"center",
+marginBottom:20
+},
+
 input:{
 backgroundColor:"#fff",
 padding:14,
-borderRadius:8,
-marginBottom:12
+borderRadius:10,
+marginBottom:10,
+fontSize:16
 },
 
 button:{
 backgroundColor:"#007AFF",
-padding:14,
-borderRadius:8,
-alignItems:"center"
+padding:15,
+borderRadius:10,
+alignItems:"center",
+marginTop:5
 },
 
 btnText:{
 color:"#fff",
-fontWeight:"bold"
+fontWeight:"bold",
+fontSize:15
 },
 
 link:{
 marginTop:20,
-textAlign:"center"
+textAlign:"center",
+color:"#fff",
+fontSize:16
 },
 
 logout:{
-backgroundColor:"red",
-padding:10,
-borderRadius:8,
-marginBottom:20
+backgroundColor:"#ff3b30",
+paddingHorizontal:15,
+paddingVertical:10,
+borderRadius:10
 },
 
 total:{
-fontSize:22,
+fontSize:28,
 fontWeight:"bold",
-color:"#fff",
 textAlign:"center",
-marginVertical:15
+color:"#fff",
+marginVertical:20
 },
 
 card:{
 backgroundColor:"#fff",
-padding:12,
-borderRadius:8,
-marginTop:10
+padding:15,
+borderRadius:12,
+marginTop:15
+},
+
+valor:{
+fontSize:24,
+fontWeight:"bold",
+marginBottom:10
 },
 
 wpp:{
 backgroundColor:"#25D366",
-padding:8,
-marginTop:10,
-borderRadius:6,
-alignItems:"center"
+padding:12,
+borderRadius:8,
+alignItems:"center",
+marginTop:15
 },
 
-mail:{
-backgroundColor:"#007AFF",
-padding:8,
-marginTop:5,
-borderRadius:6,
-alignItems:"center"
+delete:{
+backgroundColor:"#ff3b30",
+padding:12,
+borderRadius:8,
+alignItems:"center",
+marginTop:10
 }
 
 });
