@@ -278,9 +278,7 @@ const Home = ({ onLogout }) => {
   const whatsapp = (item) => {
 
     const msg =
-`Orçamento
-Qtd: ${item.quantidade}
-Total: R$ ${item.total}`;
+`O Orçamento da Qtd: ${item.quantidade} ficaria em um Total de: R$ ${item.total}`;
 
     Linking.openURL(
       `https://wa.me/?text=${encodeURIComponent(msg)}`
@@ -290,9 +288,7 @@ Total: R$ ${item.total}`;
   const email = (item) => {
 
     const msg =
-`Orçamento
-Qtd: ${item.quantidade}
-Total: R$ ${item.total}`;
+`O Orçamento da Qtd: ${item.quantidade} ficaria em um Total de: R$ ${item.total}`;
 
     Linking.openURL(
       `mailto:?subject=Orçamento&body=${encodeURIComponent(msg)}`
