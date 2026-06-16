@@ -126,24 +126,32 @@ const AuthService = {
 const OrcService = {
   async salvar(userId, token, orc) {
     try {
+      // Limpa os valores para garantir que sejam números válidos no Firestore
+      const dadosParaSalvar = {
+        userId,
+        largura:   orc.largura.replace(',', '.') || '0',
+        altura:    orc.altura.replace(',', '.')  || '0',
+        material:  orc.material || '',
+        precoUnit: parseFloat(String(orc.precoUnit).replace(',', '.')) || 0,
+        total:     parseFloat(String(orc.total).replace(',', '.')) || 0,
+        criadoEm:  new Date(),
+      };
+
       const res = await fetch(`${DB_URL}/orcamentos`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify(toFirestore({
-          userId,
-          largura:     orc.largura     || '',
-          altura:      orc.altura      || '',
-          material:    orc.material    || '',
-          precoUnit:   parseFloat(orc.precoUnit)   || 0,
-          total:       parseFloat(orc.total)        || 0,
-          criadoEm:    new Date(),
-        })),
+        body: JSON.stringify(toFirestore(dadosParaSalvar)),
       });
+
       const data = await res.json();
-      if (data.error) return { ok: false, erro: data.error.message };
+      
+      if (!res.ok) {
+        return { ok: false, erro: data.error?.message || 'Erro no servidor' };
+      }
+      
       return { ok: true };
     } catch (e) {
       return { ok: false, erro: 'Erro de conexão ao salvar.' };
