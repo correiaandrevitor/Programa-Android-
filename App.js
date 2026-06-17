@@ -565,18 +565,9 @@ function TelaLogin({ aoLogar }) {
 // TELA DE ORÇAMENTOS
 // ─────────────────────────────────────────────
 const LISTA_MATERIAIS = [
-  { nome: 'BOPP Brilho', preco: 1.50 },
-  { nome: 'BOPP Fosco', preco: 1.65 },
-  { nome: 'BOPP Metalizado', preco: 2.10 },
-  { nome: 'BOPP Transparente', preco: 1.80 },
-  { nome: 'Papel Couché', preco: 0.95 },
-  { nome: 'Papel Térmico', preco: 1.20 },
-  { nome: 'Papel Transtherm', preco: 1.10 },
-  { nome: 'Vinil Branco', preco: 2.50 },
-  { nome: 'Vinil Transparente', preco: 2.70 },
-  { nome: 'Poliéster Prata', preco: 4.50 },
-  { nome: 'Void (Segurança)', preco: 6.00 },
-  { nome: 'Casca de Ovo', preco: 5.50 },
+  { nome: 'BOPP Fosco', preco: 3.65 },
+  { nome: 'Papel Couché', preco: 2.30 },
+  { nome: 'Papel Térmico', preco: 2.75 },
 ];
 
 const ORC_VAZIO = { 
@@ -617,10 +608,10 @@ function TelaOrcamentos({ user, aoSair }) {
 
       const larg = parseFloat(novo.largura.replace(',', '.')) || 0;
       const alt  = parseFloat(novo.altura.replace(',', '.'))  || 0;
-      const prec = parseFloat(novo.precoUnit.replace(',', '.')) || 0;
+      const preco = parseFloat(novo.precoUnit.replace(',', '.')) || 0;
       
       // FÓRMULA: (Largura * Altura / 1000) * Preço = R$/Milheiro
-      const total = (larg * alt / 1000) * prec;
+      const total = (larg * alt / 1000) * preco;
       
       novo.total = total.toFixed(2).replace('.', ',');
       return novo;
