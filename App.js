@@ -15,6 +15,7 @@ import {
   Platform,
   Linking,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ─────────────────────────────────────────────
 // FIREBASE CONFIG
@@ -37,9 +38,6 @@ const COR = {
   verde:      '#16a34a',
   verdeClr:   '#dcfce7',
   verdeBorda: '#86efac',
-  azul:       '#1d4ed8',
-  azulClr:    '#dbeafe',
-  azulBorda:  '#93c5fd',
 };
 
 // ─────────────────────────────────────────────
@@ -117,110 +115,8 @@ const AuthService = {
     }
   },
 
-  async renovarToken(refreshToken) {
-    try {
-      const res = await fetch(
-        `https://securetoken.googleapis.com/v1/token?key=${API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ grant_type: 'refresh_token', refresh_token: refreshToken }),
-        }
-      );
-      const data = await res.json();
-      if (data.error) return null;
-      return data.id_token;
-    } catch (e) {
-      return null;
-    }
-  },
-
   logout() {
     this.currentUser = null;
-  },
-};
-
-// ─────────────────────────────────────────────
-// PRODUTO SERVICE
-// ─────────────────────────────────────────────
-const ProdutoService = {
-  async salvar(userId, token, produto) {
-    try {
-      const res = await fetch(`${DB_URL}/produtos`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify(toFirestore({
-          userId,
-          nome:        produto.nome        || '',
-          descricao:   produto.descricao   || '',
-          material:    produto.material    || '',
-          largura:     produto.largura     || '',
-          comprimento: produto.comprimento || '',
-          precoUnit:   parseFloat(produto.precoUnit) || 0,
-          criadoEm:    new Date(),
-        })),
-      });
-      const data = await res.json();
-      if (data.error) return { ok: false, erro: data.error.message };
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, erro: 'Erro de conexão ao salvar.' };
-    }
-  },
-
-  async listar(userId, token) {
-    try {
-      const res = await fetch(`${DB_URL}/produtos?pageSize=100`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      const data = await res.json();
-      if (data.error || !data.documents) return [];
-      return data.documents
-        .map(fromFirestore)
-        .filter((p) => p.userId === userId)
-        .sort((a, b) => new Date(b.criadoEm) - new Date(a.criadoEm));
-    } catch (e) {
-      return [];
-    }
-  },
-
-  async atualizar(id, token, produto) {
-    try {
-      const campos = Object.keys(produto).join(',');
-      const res = await fetch(
-        `${DB_URL}/produtos/${id}?updateMask.fieldPaths=${campos}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: JSON.stringify(toFirestore(produto)),
-        }
-      );
-      const data = await res.json();
-      if (data.error) return { ok: false, erro: data.error.message };
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, erro: 'Erro ao atualizar.' };
-    }
-  },
-
-  async deletar(id, token) {
-    try {
-      const res = await fetch(`${DB_URL}/produtos/${id}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (res.status === 200 || res.status === 204) return { ok: true };
-      const data = await res.json();
-      return { ok: false, erro: data.error?.message || 'Erro ao excluir' };
-    } catch (e) {
-      return { ok: false, erro: 'Erro de conexão ao excluir.' };
-    }
   },
 };
 
@@ -230,24 +126,32 @@ const ProdutoService = {
 const OrcService = {
   async salvar(userId, token, orc) {
     try {
+      // Limpa os valores para garantir que sejam números válidos no Firestore
+      const dadosParaSalvar = {
+        userId,
+        largura:   orc.largura.replace(',', '.') || '0',
+        altura:    orc.altura.replace(',', '.')  || '0',
+        material:  orc.material || '',
+        precoUnit: parseFloat(String(orc.precoUnit).replace(',', '.')) || 0,
+        total:     parseFloat(String(orc.total).replace(',', '.')) || 0,
+        criadoEm:  new Date(),
+      };
+
       const res = await fetch(`${DB_URL}/orcamentos`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify(toFirestore({
-          userId,
-          largura:     orc.largura     || '',
-          altura: orc.altura || '',
-          material:    orc.material    || '',
-          precoUnit:   parseFloat(orc.precoUnit)   || 0,
-          total:       parseFloat(orc.total)        || 0,
-          criadoEm:    new Date(),
-        })),
+        body: JSON.stringify(toFirestore(dadosParaSalvar)),
       });
+
       const data = await res.json();
-      if (data.error) return { ok: false, erro: data.error.message };
+      
+      if (!res.ok) {
+        return { ok: false, erro: data.error?.message || 'Erro no servidor' };
+      }
+      
       return { ok: true };
     } catch (e) {
       return { ok: false, erro: 'Erro de conexão ao salvar.' };
@@ -368,8 +272,8 @@ function ModalEnviar({ visivel, item, remetente, aoFechar, aoToast }) {
       '',
       '━━━━━━━━━━━━━━━━━━━━━',
       item.material    ? '🧾 *Material:*    ' + item.material    : null,
-      item.largura     ? '↔️ *Largura:*     ' + item.largura     : null,
-      item.comprimento ? '↕️ *Altura:* ' + item.altura : null,
+      item.largura     ? '↔️ *Largura:*     ' + item.largura + ' cm' : null,
+      item.altura      ? '↕️ *Altura:*      ' + item.altura + ' cm'  : null,
       '💲 *Preço unit.:* ' + fmtValor(item.precoUnit),
       '━━━━━━━━━━━━━━━━━━━━━',
       '💰 *TOTAL: ' + fmtValor(item.total) + '*',
@@ -396,7 +300,7 @@ function ModalEnviar({ visivel, item, remetente, aoFechar, aoToast }) {
     try {
       const podeNativo = await Linking.canOpenURL(url);
       await Linking.openURL(podeNativo ? url : urlFallback);
-      aoToast('WhatsApp aberto com o orçamento!');
+      aoToast('WhatsApp aberto!');
       limparEFechar();
     } catch (e) {
       aoToast('Erro ao abrir WhatsApp', 'erro');
@@ -411,12 +315,12 @@ function ModalEnviar({ visivel, item, remetente, aoFechar, aoToast }) {
       return;
     }
     setEnviando(true);
-    const assunto  = encodeURIComponent('Orçamento de Etiquetas');
-    const corpo    = encodeURIComponent(gerarMensagem());
+    const assunto = encodeURIComponent('Orçamento de Etiquetas');
+    const corpo   = encodeURIComponent(gerarMensagem());
     const urlEmail = 'mailto:' + email + '?subject=' + assunto + '&body=' + corpo;
     try {
       await Linking.openURL(urlEmail);
-      aoToast('E-mail aberto com o orçamento!');
+      aoToast('E-mail aberto!');
       limparEFechar();
     } catch (e) {
       aoToast('Erro ao abrir e-mail', 'erro');
@@ -443,17 +347,13 @@ function ModalEnviar({ visivel, item, remetente, aoFechar, aoToast }) {
               style={[st.abaBtn, abaSelecionada === 'whatsapp' && st.abaBtnAtiva]}
               onPress={() => setAbaSelecionada('whatsapp')}
               activeOpacity={0.8}>
-              <Text style={[st.abaBtnTexto, abaSelecionada === 'whatsapp' && st.abaBtnTextoAtiva]}>
-                💬 WhatsApp
-              </Text>
+              <Text style={[st.abaBtnTexto, abaSelecionada === 'whatsapp' && st.abaBtnTextoAtiva]}>💬 WhatsApp</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[st.abaBtn, abaSelecionada === 'email' && st.abaBtnAtiva]}
               onPress={() => setAbaSelecionada('email')}
               activeOpacity={0.8}>
-              <Text style={[st.abaBtnTexto, abaSelecionada === 'email' && st.abaBtnTextoAtiva]}>
-                ✉️ E-mail
-              </Text>
+              <Text style={[st.abaBtnTexto, abaSelecionada === 'email' && st.abaBtnTextoAtiva]}>✉️ E-mail</Text>
             </TouchableOpacity>
           </View>
 
@@ -463,14 +363,11 @@ function ModalEnviar({ visivel, item, remetente, aoFechar, aoToast }) {
               <Text style={st.enviarResumoTotal}>{fmtValor(item.total)}</Text>
             </View>
             <Text style={st.enviarResumoDetalhe}>
-              {item.quantidade} un × {fmtValor(item.precoUnit)}
-              {item.material    ? '  •  ' + item.material    : ''}
-              {item.largura     ? '  •  ' + item.largura     : ''}
-              {item.comprimento ? '  •  ' + item.comprimento : ''}
+              {item.material ? item.material : 'Sem material'} • {item.largura} x {item.altura}
             </Text>
           </View>
 
-          {abaSelecionada === 'whatsapp' && (
+          {abaSelecionada === 'whatsapp' ? (
             <>
               <Text style={st.enviarCampoLabel}>WhatsApp do cliente (com DDD)</Text>
               <View style={st.campoLinha}>
@@ -482,18 +379,11 @@ function ModalEnviar({ visivel, item, remetente, aoFechar, aoToast }) {
                   placeholder="(11) 91234-5678"
                   placeholderTextColor="#b08060"
                   keyboardType="phone-pad"
-                  autoCapitalize="none"
-                  autoCorrect={false}
                   maxLength={16}
                 />
               </View>
-              <Text style={st.enviarDica}>
-                O WhatsApp será aberto com o orçamento formatado e pronto para enviar.
-              </Text>
             </>
-          )}
-
-          {abaSelecionada === 'email' && (
+          ) : (
             <>
               <Text style={st.enviarCampoLabel}>E-mail do cliente</Text>
               <View style={st.campoLinha}>
@@ -505,12 +395,8 @@ function ModalEnviar({ visivel, item, remetente, aoFechar, aoToast }) {
                   placeholderTextColor="#b08060"
                   keyboardType="email-address"
                   autoCapitalize="none"
-                  autoCorrect={false}
                 />
               </View>
-              <Text style={st.enviarDica}>
-                O aplicativo de e-mail será aberto com o orçamento já preenchido e pronto para enviar.
-              </Text>
             </>
           )}
 
@@ -585,37 +471,9 @@ function Campo({ label, valor, aoMudar, placeholder, teclado = 'default', senha 
           keyboardType={teclado}
           secureTextEntry={senha}
           autoCapitalize="none"
-          autoCorrect={false}
         />
         {iconeDir && <View style={st.campoDirWrap}>{iconeDir}</View>}
       </View>
-    </View>
-  );
-}
-
-// ─────────────────────────────────────────────
-// COMPONENTE: BARRA DE NAVEGAÇÃO INFERIOR
-// ─────────────────────────────────────────────
-function NavBar({ telaAtiva, aoMudarTela }) {
-  const abas = [
-    { id: 'orcamentos', icone: '🏷️', label: 'Orçamentos' },
-    { id: 'produtos',   icone: '📦', label: 'Produtos'   },
-  ];
-
-  return (
-    <View style={st.navBar}>
-      {abas.map((aba) => (
-        <TouchableOpacity
-          key={aba.id}
-          style={[st.navItem, telaAtiva === aba.id && st.navItemAtivo]}
-          onPress={() => aoMudarTela(aba.id)}
-          activeOpacity={0.8}>
-          <Text style={st.navIcone}>{aba.icone}</Text>
-          <Text style={[st.navLabel, telaAtiva === aba.id && st.navLabelAtivo]}>
-            {aba.label}
-          </Text>
-        </TouchableOpacity>
-      ))}
     </View>
   );
 }
@@ -626,58 +484,30 @@ function NavBar({ telaAtiva, aoMudarTela }) {
 function TelaLogin({ aoLogar }) {
   const [modoLogin, setModoLogin]               = useState(true);
   const [email, setEmail]                       = useState('');
-  const [confirmEmail, setConfirmEmail]         = useState('');
   const [senha, setSenha]                       = useState('');
-  const [confirmSenha, setConfirmSenha]         = useState('');
   const [mostrarSenha, setMostrarSenha]         = useState(false);
-  const [mostrarConfSenha, setMostrarConfSenha] = useState(false);
   const [carregando, setCarregando]             = useState(false);
   const [erroMsg, setErroMsg]                   = useState('');
-  const [okMsg, setOkMsg]                       = useState('');
 
   const trocarModo = (paraLogin) => {
     setModoLogin(paraLogin);
     setErroMsg('');
-    setOkMsg('');
     setEmail('');
     setSenha('');
-    setConfirmEmail('');
-    setConfirmSenha('');
-    setMostrarSenha(false);
-    setMostrarConfSenha(false);
   };
 
   const enviar = async () => {
     setErroMsg('');
-    setOkMsg('');
-
     if (!email.trim() || !senha.trim()) {
-      setErroMsg('Preencha todos os campos obrigatórios');
+      setErroMsg('Preencha todos os campos');
       return;
     }
-    if (senha.length < 8) {
-      setErroMsg('A senha deve ter pelo menos 8 caracteres');
-      return;
-    }
-    if (!modoLogin && !AuthService._validarSenha(senha)) {
-      setErroMsg('A senha deve conter: maiúscula, minúscula, número e caractere especial (!@#$%^&*)');
-      return;
-    }
-
     setCarregando(true);
     try {
       if (!modoLogin) {
-        if (email.trim().toLowerCase() !== confirmEmail.trim().toLowerCase()) {
-          setErroMsg('Os e-mails não coincidem');
-          return;
-        }
-        if (senha !== confirmSenha) {
-          setErroMsg('As senhas não coincidem');
-          return;
-        }
         const res = await AuthService.register(email, senha);
         if (res.ok) {
-          setOkMsg('Conta criada com sucesso! Faça login.');
+          setErroMsg('Conta criada! Faça login.');
           trocarModo(true);
         } else {
           setErroMsg(res.erro);
@@ -691,102 +521,38 @@ function TelaLogin({ aoLogar }) {
         }
       }
     } catch (e) {
-      setErroMsg('Erro inesperado. Tente novamente.');
+      setErroMsg('Erro inesperado.');
     } finally {
       setCarregando(false);
     }
   };
 
-  const BotaoOlho = ({ mostrar, aoAlternar }) => (
-    <TouchableOpacity onPress={aoAlternar} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-      <Text style={{ fontSize: 18 }}>{mostrar ? '🙈' : '👁️'}</Text>
-    </TouchableOpacity>
-  );
-
   return (
     <SafeAreaView style={st.loginSafe}>
       <StatusBar barStyle="light-content" backgroundColor={COR.laranjaEsc} />
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
-        <ScrollView
-          contentContainerStyle={st.loginScroll}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
-
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={st.loginScroll} keyboardShouldPersistTaps="handled">
           <View style={st.logoArea}>
-            <View style={st.logoBox}>
-              <Text style={st.logoEmoji}>🏷️</Text>
-            </View>
+            <View style={st.logoBox}><Text style={st.logoEmoji}>🏷️</Text></View>
             <Text style={st.appTitulo}>EtiquetaFácil</Text>
             <Text style={st.appSub}>Orçamentos de etiquetas</Text>
           </View>
 
           <View style={st.loginCard}>
             <View style={st.tabs}>
-              <TouchableOpacity
-                style={[st.tabBtn, modoLogin && st.tabBtnAtivo]}
-                onPress={() => trocarModo(true)}
-                activeOpacity={0.8}>
-                <Text style={[st.tabBtnTexto, modoLogin && st.tabBtnTextoAtivo]}>Entrar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[st.tabBtn, !modoLogin && st.tabBtnAtivo]}
-                onPress={() => trocarModo(false)}
-                activeOpacity={0.8}>
-                <Text style={[st.tabBtnTexto, !modoLogin && st.tabBtnTextoAtivo]}>Cadastrar</Text>
-              </TouchableOpacity>
+              <TouchableOpacity style={[st.tabBtn, modoLogin && st.tabBtnAtivo]} onPress={() => trocarModo(true)}><Text style={[st.tabBtnTexto, modoLogin && st.tabBtnTextoAtivo]}>Entrar</Text></TouchableOpacity>
+              <TouchableOpacity style={[st.tabBtn, !modoLogin && st.tabBtnAtivo]} onPress={() => trocarModo(false)}><Text style={[st.tabBtnTexto, !modoLogin && st.tabBtnTextoAtivo]}>Cadastrar</Text></TouchableOpacity>
             </View>
 
-            {!!erroMsg && (
-              <View style={st.erroBox}>
-                <Text style={st.erroTexto}>⚠ {erroMsg}</Text>
-              </View>
-            )}
-            {!!okMsg && (
-              <View style={st.okBox}>
-                <Text style={st.okTexto}>✓ {okMsg}</Text>
-              </View>
-            )}
+            {!!erroMsg && <View style={st.erroBox}><Text style={st.erroTexto}>⚠ {erroMsg}</Text></View>}
 
             <Campo label="E-mail" valor={email} aoMudar={setEmail} placeholder="seu@email.com" teclado="email-address" />
-
-            {!modoLogin && (
-              <Campo label="Confirmar e-mail" valor={confirmEmail} aoMudar={setConfirmEmail} placeholder="repita o e-mail" teclado="email-address" />
-            )}
-
-            <Campo
-              label="Senha"
-              valor={senha}
-              aoMudar={setSenha}
-              placeholder={modoLogin ? 'senha' : 'mínimo 8 caracteres'}
-              senha={!mostrarSenha}
-              iconeDir={<BotaoOlho mostrar={mostrarSenha} aoAlternar={() => setMostrarSenha((v) => !v)} />}
-            />
-
+            <Campo label="Senha" valor={senha} aoMudar={setSenha} placeholder="senha" senha={!mostrarSenha} iconeDir={<TouchableOpacity onPress={() => setMostrarSenha(!mostrarSenha)}><Text>{mostrarSenha ? '🙈' : '👁️'}</Text></TouchableOpacity>} />
+            
             {!modoLogin && <IndicadorForcaSenha senha={senha} mostrarRequisitos={true} />}
 
-            {!modoLogin && (
-              <Campo
-                label="Confirmar senha"
-                valor={confirmSenha}
-                aoMudar={setConfirmSenha}
-                placeholder="repita a senha"
-                senha={!mostrarConfSenha}
-                iconeDir={<BotaoOlho mostrar={mostrarConfSenha} aoAlternar={() => setMostrarConfSenha((v) => !v)} />}
-              />
-            )}
-
-            <TouchableOpacity
-              style={[st.btnPrimario, carregando && st.btnDesabilitado]}
-              onPress={enviar}
-              disabled={carregando}
-              activeOpacity={0.85}>
-              {carregando
-                ? <ActivityIndicator color="#fff" />
-                : <Text style={st.btnPrimarioTexto}>{modoLogin ? 'ENTRAR' : 'CRIAR CONTA'}</Text>
-              }
+            <TouchableOpacity style={[st.btnPrimario, carregando && st.btnDesabilitado]} onPress={enviar} disabled={carregando}>
+              {carregando ? <ActivityIndicator color="#fff" /> : <Text style={st.btnPrimarioTexto}>{modoLogin ? 'ENTRAR' : 'CRIAR CONTA'}</Text>}
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -798,18 +564,37 @@ function TelaLogin({ aoLogar }) {
 // ─────────────────────────────────────────────
 // TELA DE ORÇAMENTOS
 // ─────────────────────────────────────────────
-const ORC_VAZIO = {
-  material: '', largura: '', altura: '',
-  precoUnit: '', total: '0,00',
+const LISTA_MATERIAIS = [
+  { nome: 'BOPP Brilho', preco: 1.50 },
+  { nome: 'BOPP Fosco', preco: 1.65 },
+  { nome: 'BOPP Metalizado', preco: 2.10 },
+  { nome: 'BOPP Transparente', preco: 1.80 },
+  { nome: 'Papel Couché', preco: 0.95 },
+  { nome: 'Papel Térmico', preco: 1.20 },
+  { nome: 'Papel Transtherm', preco: 1.10 },
+  { nome: 'Vinil Branco', preco: 2.50 },
+  { nome: 'Vinil Transparente', preco: 2.70 },
+  { nome: 'Poliéster Prata', preco: 4.50 },
+  { nome: 'Void (Segurança)', preco: 6.00 },
+  { nome: 'Casca de Ovo', preco: 5.50 },
+];
+
+const ORC_VAZIO = { 
+  material: LISTA_MATERIAIS[0].nome, 
+  largura: '', 
+  altura: '', 
+  precoUnit: String(LISTA_MATERIAIS[0].preco), 
+  total: '0,00' 
 };
 
-function TelaOrcamentos({ user }) {
+function TelaOrcamentos({ user, aoSair }) {
   const [form, setForm]             = useState(ORC_VAZIO);
   const [lista, setLista]           = useState([]);
   const [carregando, setCarregando] = useState(false);
   const [toast, setToast]           = useState(null);
   const [confirmar, setConfirmar]   = useState(null);
   const [enviarItem, setEnviarItem] = useState(null);
+  const [modalMaterial, setModalMaterial] = useState(false);
 
   useEffect(() => { carregarLista(); }, []);
 
@@ -822,420 +607,145 @@ function TelaOrcamentos({ user }) {
 
   const atualizarCampo = (campo, valor) => {
     setForm((prev) => {
-      const novo  = { ...prev, [campo]: valor };
-
-      const largura   = parseFloat(novo.largura.replace(',', '.')) || 0;
-      const preco = parseFloat(novo.precoUnit.replace(',', '.'))  || 0;
-      const altura = pareseFloat(String(novo.altura).replace(',','.')) || 0;
-
-      const metragem = (largura * altura) / 1000;
-      const total = metragem * preco;
-
-      novo.total = total.toFixed(2).replace('.',',');
+      const novo = { ...prev, [campo]: valor };
       
+      // Se mudar o material, atualiza o preço unitário automaticamente
+      if (campo === 'material') {
+        const mat = LISTA_MATERIAIS.find(m => m.nome === valor);
+        if (mat) novo.precoUnit = String(mat.preco);
+      }
+
+      const larg = parseFloat(novo.largura.replace(',', '.')) || 0;
+      const alt  = parseFloat(novo.altura.replace(',', '.'))  || 0;
+      const prec = parseFloat(novo.precoUnit.replace(',', '.')) || 0;
+      
+      // FÓRMULA: (Largura * Altura / 1000) * Preço = R$/Milheiro
+      const total = (larg * alt / 1000) * prec;
+      
+      novo.total = total.toFixed(2).replace('.', ',');
       return novo;
     });
   };
 
   const salvar = async () => {
     if (!form.largura || !form.altura || !form.precoUnit) {
-      exibirToast('Informe largura, altura e preço unitário', 'erro');
+      exibirToast('Preencha os campos obrigatórios', 'erro');
       return;
     }
     setCarregando(true);
-    try {
-      const res = await OrcService.salvar(user.id, user.token, {
-        ...form,
-        total: parseFloat(form.total.replace(',', '.')) || 0,
-      });
-      if (res.ok) {
-        exibirToast('Orçamento salvo com sucesso!');
-        setForm(ORC_VAZIO);
-        await carregarLista();
-      } else {
-        exibirToast(res.erro, 'erro');
-      }
-    } catch (e) {
-      exibirToast('Erro ao salvar orçamento', 'erro');
-    } finally {
-      setCarregando(false);
-    }
+    const res = await OrcService.salvar(user.id, user.token, {
+      ...form,
+      total: parseFloat(form.total.replace(',', '.')) || 0,
+    });
+    if (res.ok) {
+      exibirToast('Salvo!');
+      setForm(ORC_VAZIO);
+      carregarLista();
+    } else exibirToast(res.erro, 'erro');
+    setCarregando(false);
   };
 
   const pedirDelecao = (id) => {
     setConfirmar({
-      mensagem: 'Deseja realmente excluir este orçamento?',
+      mensagem: 'Excluir orçamento?',
       aoConfirmar: async () => {
         setConfirmar(null);
         const res = await OrcService.deletar(id, user.token);
-        if (res.ok) {
-          exibirToast('Orçamento excluído');
-          await carregarLista();
-        } else {
-          exibirToast(res.erro, 'erro');
-        }
+        if (res.ok) { exibirToast('Excluído'); carregarLista(); }
+        else exibirToast(res.erro, 'erro');
       },
     });
   };
 
-  const formatarData  = (iso) => new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  const formatarValor = (n)   => Number(n).toFixed(2).replace('.', ',');
-
   return (
-    <View style={{ flex: 1, backgroundColor: COR.fundo }}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
-        <ScrollView
-          contentContainerStyle={st.mainScroll}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
-
+    <SafeAreaView style={st.mainSafe}>
+      <StatusBar barStyle="light-content" backgroundColor={COR.laranjaEsc} />
+      <View style={st.topBar}>
+        <Text style={st.topEmail} numberOfLines={1}>{user.email}</Text>
+        <TouchableOpacity style={st.btnSair} onPress={aoSair}><Text style={st.btnSairTexto}>Sair</Text></TouchableOpacity>
+      </View>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={st.mainScroll} keyboardShouldPersistTaps="handled">
           <Text style={st.secaoTitulo}>Novo Orçamento</Text>
           <View style={st.formCard}>
-            <Campo label="Material" valor={form.material} aoMudar={(v) => atualizarCampo('material', v)} placeholder="ex: BOPP" />
+            <Text style={st.campoLabel}>Material</Text>
+            <TouchableOpacity 
+              style={st.seletorMaterial} 
+              onPress={() => setModalMaterial(true)}
+              activeOpacity={0.7}
+            >
+              <Text style={st.seletorMaterialTexto}>{form.material}</Text>
+              <Text style={st.seletorMaterialIcone}>▼</Text>
+            </TouchableOpacity>
+
             <View style={st.linha2}>
-              <View style={{ flex: 1 }}>
-                <Campo label="Largura" valor={form.largura} aoMudar={(v) => atualizarCampo('largura', v)} placeholder="ex: 10cm" />
-              </View>
+              <View style={{ flex: 1 }}><Campo label="Largura (cm)" valor={form.largura} aoMudar={v => atualizarCampo('largura', v)} placeholder="ex: 10" teclado="numeric" /></View>
               <View style={{ width: 10 }} />
-              <View style={{ flex: 1 }}>
-                <Campo label="Alura" valor={form.altura} aoMudar={(v) => atualizarCampo('altura', v)} placeholder="ex: 5cm" />
-              </View>
+              <View style={{ flex: 1 }}><Campo label="Altura (cm)" valor={form.altura} aoMudar={v => atualizarCampo('altura', v)} placeholder="ex: 5" teclado="numeric" /></View>
             </View>
-            <View style={st.linha2}>
-              <View style={{ width: 10 }} />
-              <View style={{ flex: 1 }}>
-                <Campo label="Preço Unitário (R$)" valor={form.precoUnit} aoMudar={(v) => atualizarCampo('precoUnit', v)} placeholder="ex: 0.25" teclado="numeric" />
-              </View>
-            </View>
+            <Campo label="Preço Unitário (R$)" valor={form.precoUnit} aoMudar={v => atualizarCampo('precoUnit', v)} placeholder="0.25" teclado="numeric" />
             <View style={st.totalBox}>
-              <Text style={st.totalLabel}>Total</Text>
+              <View>
+                <Text style={st.totalLabel}>Total</Text>
+                <Text style={st.totalSubLabel}>por milheiro</Text>
+              </View>
               <Text style={st.totalValor}>R$ {form.total}</Text>
             </View>
-            <TouchableOpacity
-              style={[st.btnSalvar, carregando && st.btnDesabilitado]}
-              onPress={salvar}
-              disabled={carregando}
-              activeOpacity={0.85}>
-              {carregando
-                ? <ActivityIndicator color="#fff" />
-                : <Text style={st.btnSalvarTexto}>💾 SALVAR ORÇAMENTO</Text>
-              }
+            <TouchableOpacity style={[st.btnSalvar, carregando && st.btnDesabilitado]} onPress={salvar} disabled={carregando}>
+              {carregando ? <ActivityIndicator color="#fff" /> : <Text style={st.btnSalvarTexto}>💾 SALVAR ORÇAMENTO</Text>}
             </TouchableOpacity>
           </View>
 
-          <View style={st.listaHeader}>
-            <Text style={st.secaoTitulo}>Orçamentos Salvos</Text>
-            <View style={st.contadorBadge}>
-              <Text style={st.contadorTexto}>{lista.length}</Text>
-            </View>
-          </View>
-
-          {lista.length === 0 ? (
-            <View style={st.estadoVazio}>
-              <Text style={st.estadoVazioIcone}>📋</Text>
-              <Text style={st.estadoVazioTexto}>Nenhum orçamento salvo ainda</Text>
-            </View>
-          ) : (
-            lista.map((item) => (
-              <View key={item.id} style={st.itemCard}>
-                <View style={st.itemInfo}>
-                  <Text style={st.itemTotal}>R$ {formatarValor(item.total)}</Text>
-                  {!!item.material    && <Text style={st.itemLinha}>🧾 {item.material}</Text>}
-                  {!!item.largura     && <Text style={st.itemLinha}>↔️ Largura: {item.largura}</Text>}
-                  {!!item.comprimento && <Text style={st.itemLinha}>↕️ Altura: {item.altura}</Text>}
-                  <Text style={st.itemData}>{formatarData(item.criadoEm)}</Text>
-                </View>
-                <View style={st.itemAcoes}>
-                  <TouchableOpacity style={st.btnEnviarCard} onPress={() => setEnviarItem(item)} activeOpacity={0.75}>
-                    <Text style={st.btnEnviarCardIcone}>✉</Text>
-                    <Text style={st.btnEnviarCardTexto}>Enviar</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={st.btnDeletar} onPress={() => pedirDelecao(item.id)} activeOpacity={0.7}>
-                    <Text style={st.btnDeletarTexto}>✕</Text>
-                  </TouchableOpacity>
-                </View>
+          <View style={st.listaHeader}><Text style={st.secaoTitulo}>Orçamentos Salvos</Text><View style={st.contadorBadge}><Text style={st.contadorTexto}>{lista.length}</Text></View></View>
+          {lista.map(item => (
+            <View key={item.id} style={st.itemCard}>
+              <View style={st.itemInfo}>
+                <Text style={st.itemTotal}>R$ {Number(item.total).toFixed(2).replace('.', ',')}</Text>
+                <Text style={st.itemLinha}>{item.material} • {item.largura}x{item.altura} cm</Text>
               </View>
-            ))
-          )}
-          <View style={{ height: 24 }} />
+              <View style={st.itemAcoes}>
+                <TouchableOpacity style={st.btnEnviarCard} onPress={() => setEnviarItem(item)}><Text style={st.btnEnviarCardTexto}>Enviar</Text></TouchableOpacity>
+                <TouchableOpacity style={st.btnDeletar} onPress={() => pedirDelecao(item.id)}><Text style={st.btnDeletarTexto}>✕</Text></TouchableOpacity>
+              </View>
+            </View>
+          ))}
         </ScrollView>
       </KeyboardAvoidingView>
-
       {!!toast && <Toast mensagem={toast.mensagem} tipo={toast.tipo} aoEsconder={() => setToast(null)} />}
-      <ModalConfirmar
-        visivel={!!confirmar}
-        mensagem={confirmar ? confirmar.mensagem : ''}
-        aoConfirmar={confirmar ? confirmar.aoConfirmar : () => {}}
-        aoCancelar={() => setConfirmar(null)}
-      />
-      <ModalEnviar
-        visivel={!!enviarItem}
-        item={enviarItem}
-        remetente={user.email}
-        aoFechar={() => setEnviarItem(null)}
-        aoToast={exibirToast}
-      />
-    </View>
-  );
-}
+      <ModalConfirmar visivel={!!confirmar} mensagem={confirmar?.mensagem} aoConfirmar={confirmar?.aoConfirmar} aoCancelar={() => setConfirmar(null)} />
+      <ModalEnviar visivel={!!enviarItem} item={enviarItem} remetente={user.email} aoFechar={() => setEnviarItem(null)} aoToast={exibirToast} />
 
-// ─────────────────────────────────────────────
-// TELA DE PRODUTOS
-// ─────────────────────────────────────────────
-const PROD_VAZIO = {
-  nome: '', descricao: '', material: '',
-  largura: '', comprimento: '', precoUnit: '',
-};
-
-function TelaProdutos({ user }) {
-  const [form, setForm]             = useState(PROD_VAZIO);
-  const [lista, setLista]           = useState([]);
-  const [carregando, setCarregando] = useState(false);
-  const [editandoId, setEditandoId] = useState(null);
-  const [toast, setToast]           = useState(null);
-  const [confirmar, setConfirmar]   = useState(null);
-
-  useEffect(() => { carregarLista(); }, []);
-
-  const carregarLista = async () => {
-    const items = await ProdutoService.listar(user.id, user.token);
-    setLista(items);
-  };
-
-  const exibirToast = (mensagem, tipo = 'sucesso') => setToast({ mensagem, tipo });
-
-  const atualizarCampo = (campo, valor) =>
-    setForm((prev) => ({ ...prev, [campo]: valor }));
-
-  const salvar = async () => {
-    if (!form.nome || !form.precoUnit) {
-      exibirToast('Informe nome e preço unitário', 'erro');
-      return;
-    }
-    setCarregando(true);
-    try {
-      let res;
-      if (editandoId) {
-        res = await ProdutoService.atualizar(editandoId, user.token, {
-          nome:        form.nome,
-          descricao:   form.descricao,
-          material:    form.material,
-          largura:     form.largura,
-          comprimento: form.comprimento,
-          precoUnit:   parseFloat(form.precoUnit) || 0,
-        });
-      } else {
-        res = await ProdutoService.salvar(user.id, user.token, form);
-      }
-      if (res.ok) {
-        exibirToast(editandoId ? 'Produto atualizado!' : 'Produto cadastrado!');
-        setForm(PROD_VAZIO);
-        setEditandoId(null);
-        await carregarLista();
-      } else {
-        exibirToast(res.erro, 'erro');
-      }
-    } catch (e) {
-      exibirToast('Erro inesperado', 'erro');
-    } finally {
-      setCarregando(false);
-    }
-  };
-
-  const editar = (item) => {
-    setForm({
-      nome:        item.nome        || '',
-      descricao:   item.descricao   || '',
-      material:    item.material    || '',
-      largura:     item.largura     || '',
-      comprimento: item.comprimento || '',
-      precoUnit:   String(item.precoUnit || ''),
-    });
-    setEditandoId(item.id);
-  };
-
-  const cancelarEdicao = () => {
-    setForm(PROD_VAZIO);
-    setEditandoId(null);
-  };
-
-  const pedirDelecao = (id) => {
-    setConfirmar({
-      mensagem: 'Deseja realmente excluir este produto?',
-      aoConfirmar: async () => {
-        setConfirmar(null);
-        const res = await ProdutoService.deletar(id, user.token);
-        if (res.ok) {
-          exibirToast('Produto excluído');
-          await carregarLista();
-        } else {
-          exibirToast(res.erro, 'erro');
-        }
-      },
-    });
-  };
-
-  const formatarValor = (n) => 'R$ ' + Number(n).toFixed(2).replace('.', ',');
-
-  return (
-    <View style={{ flex: 1, backgroundColor: COR.fundo }}>
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
-        <ScrollView
-          contentContainerStyle={st.mainScroll}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
-
-          <Text style={st.secaoTitulo}>
-            {editandoId ? '✏️ Editar Produto' : '➕ Novo Produto'}
-          </Text>
-          <View style={st.formCard}>
-            <Campo
-              label="Nome do produto *"
-              valor={form.nome}
-              aoMudar={(v) => atualizarCampo('nome', v)}
-              placeholder="ex: Etiqueta BOPP Brilho"
-            />
-            <Campo
-              label="Descrição"
-              valor={form.descricao}
-              aoMudar={(v) => atualizarCampo('descricao', v)}
-              placeholder="ex: Etiqueta para uso externo"
-            />
-            <Campo
-              label="Material"
-              valor={form.material}
-              aoMudar={(v) => atualizarCampo('material', v)}
-              placeholder="ex: BOPP"
-            />
-            <View style={st.linha2}>
-              <View style={{ flex: 1 }}>
-                <Campo label="Largura" valor={form.largura} aoMudar={(v) => atualizarCampo('largura', v)} placeholder="ex: 10cm" />
-              </View>
-              <View style={{ width: 10 }} />
-              <View style={{ flex: 1 }}>
-                <Campo label="Comprimento" valor={form.comprimento} aoMudar={(v) => atualizarCampo('comprimento', v)} placeholder="ex: 5cm" />
-              </View>
-            </View>
-            <Campo
-              label="Preço Unitário (R$) *"
-              valor={form.precoUnit}
-              aoMudar={(v) => atualizarCampo('precoUnit', v)}
-              placeholder="ex: 0.25"
-              teclado="numeric"
-            />
-
-            <TouchableOpacity
-              style={[st.btnSalvar, carregando && st.btnDesabilitado]}
-              onPress={salvar}
-              disabled={carregando}
-              activeOpacity={0.85}>
-              {carregando
-                ? <ActivityIndicator color="#fff" />
-                : <Text style={st.btnSalvarTexto}>
-                    {editandoId ? '💾 SALVAR ALTERAÇÕES' : '📦 CADASTRAR PRODUTO'}
-                  </Text>
-              }
-            </TouchableOpacity>
-
-            {!!editandoId && (
-              <TouchableOpacity style={[st.btnCancelar, { marginTop: 10 }]} onPress={cancelarEdicao}>
-                <Text style={st.btnCancelarTexto}>Cancelar edição</Text>
+      {/* Modal de Seleção de Material */}
+      <Modal transparent animationType="slide" visible={modalMaterial} onRequestClose={() => setModalMaterial(false)}>
+        <View style={st.overlay}>
+          <View style={st.modalListaBox}>
+            <View style={st.modalListaHeader}>
+              <Text style={st.modalListaTitulo}>Selecione o Material</Text>
+              <TouchableOpacity onPress={() => setModalMaterial(false)}>
+                <Text style={st.modalListaFechar}>✕</Text>
               </TouchableOpacity>
-            )}
-          </View>
-
-          <View style={st.listaHeader}>
-            <Text style={st.secaoTitulo}>Produtos Cadastrados</Text>
-            <View style={st.contadorBadge}>
-              <Text style={st.contadorTexto}>{lista.length}</Text>
             </View>
+            <ScrollView style={st.modalListaScroll}>
+              {LISTA_MATERIAIS.map((m) => (
+                <TouchableOpacity 
+                  key={m.nome} 
+                  style={[st.modalListaItem, form.material === m.nome && st.modalListaItemAtivo]} 
+                  onPress={() => {
+                    atualizarCampo('material', m.nome);
+                    setModalMaterial(false);
+                  }}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={[st.modalListaItemTexto, form.material === m.nome && st.modalListaItemTextoAtivo]}>{m.nome}</Text>
+                    <Text style={st.modalListaItemSub}>Preço base: R$ {m.preco.toFixed(2).replace('.', ',')}</Text>
+                  </View>
+                  {form.material === m.nome && <Text style={st.modalListaItemCheck}>✓</Text>}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
           </View>
-
-          {lista.length === 0 ? (
-            <View style={st.estadoVazio}>
-              <Text style={st.estadoVazioIcone}>📦</Text>
-              <Text style={st.estadoVazioTexto}>Nenhum produto cadastrado ainda</Text>
-            </View>
-          ) : (
-            lista.map((item) => (
-              <View key={item.id} style={st.itemCard}>
-                <View style={st.itemInfo}>
-                  <Text style={st.itemTotal}>{item.nome}</Text>
-                  <Text style={st.itemLinha}>{formatarValor(item.precoUnit)} / unidade</Text>
-                  {!!item.material    && <Text style={st.itemLinha}>🧾 {item.material}</Text>}
-                  {!!item.largura     && <Text style={st.itemLinha}>↔️ {item.largura}</Text>}
-                  {!!item.comprimento && <Text style={st.itemLinha}>↕️ {item.comprimento}</Text>}
-                  {!!item.descricao   && <Text style={st.itemLinha}>📝 {item.descricao}</Text>}
-                </View>
-                <View style={st.itemAcoes}>
-                  <TouchableOpacity
-                    style={[st.btnEnviarCard, { backgroundColor: COR.azulClr, borderColor: COR.azulBorda }]}
-                    onPress={() => editar(item)}
-                    activeOpacity={0.75}>
-                    <Text style={[st.btnEnviarCardIcone, { color: COR.azul }]}>✏️</Text>
-                    <Text style={[st.btnEnviarCardTexto, { color: COR.azul }]}>Editar</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={st.btnDeletar} onPress={() => pedirDelecao(item.id)} activeOpacity={0.7}>
-                    <Text style={st.btnDeletarTexto}>✕</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ))
-          )}
-          <View style={{ height: 24 }} />
-        </ScrollView>
-      </KeyboardAvoidingView>
-
-      {!!toast && <Toast mensagem={toast.mensagem} tipo={toast.tipo} aoEsconder={() => setToast(null)} />}
-      <ModalConfirmar
-        visivel={!!confirmar}
-        mensagem={confirmar ? confirmar.mensagem : ''}
-        aoConfirmar={confirmar ? confirmar.aoConfirmar : () => {}}
-        aoCancelar={() => setConfirmar(null)}
-      />
-    </View>
-  );
-}
-
-// ─────────────────────────────────────────────
-// TELA AUTENTICADA (wrapper com topbar + navbar)
-// ─────────────────────────────────────────────
-function TelaAutenticada({ user, aoSair }) {
-  const [telaAtiva, setTelaAtiva] = useState('orcamentos');
-
-  return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: COR.fundo }}>
-      <StatusBar barStyle="light-content" backgroundColor={COR.laranjaEsc} />
-
-      {/* Barra de topo */}
-      <View style={st.topBar}>
-        <View style={{ flex: 1 }}>
-          <Text style={st.topTitulo}>
-            {telaAtiva === 'orcamentos' ? '🏷️ Orçamentos' : '📦 Produtos'}
-          </Text>
-          <Text style={st.topEmail} numberOfLines={1}>{user.email}</Text>
         </View>
-        <TouchableOpacity style={st.btnSair} onPress={aoSair} activeOpacity={0.8}>
-          <Text style={st.btnSairTexto}>Sair</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Conteúdo */}
-      <View style={{ flex: 1 }}>
-        {telaAtiva === 'orcamentos'
-          ? <TelaOrcamentos user={user} />
-          : <TelaProdutos   user={user} />
-        }
-      </View>
-
-      {/* Navbar inferior */}
-      <NavBar telaAtiva={telaAtiva} aoMudarTela={setTelaAtiva} />
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1244,29 +754,12 @@ function TelaAutenticada({ user, aoSair }) {
 // APP PRINCIPAL
 // ─────────────────────────────────────────────
 export default function App() {
-  const [tela, setTela] = useState('login');
   const [user, setUser] = useState(null);
 
-  if (tela === 'login') {
-    return (
-      <TelaLogin
-        aoLogar={(u) => {
-          setUser(u);
-          setTela('home');
-        }}
-      />
-    );
-  }
-
-  return (
-    <TelaAutenticada
-      user={user}
-      aoSair={() => {
-        AuthService.logout();
-        setUser(null);
-        setTela('login');
-      }}
-    />
+  return user ? (
+    <TelaOrcamentos user={user} aoSair={() => setUser(null)} />
+  ) : (
+    <TelaLogin aoLogar={u => setUser(u)} />
   );
 }
 
@@ -1274,158 +767,112 @@ export default function App() {
 // ESTILOS
 // ─────────────────────────────────────────────
 const st = StyleSheet.create({
-  // ── LOGIN ──────────────────────────────────
-  loginSafe:   { flex: 1, backgroundColor: COR.laranjaEsc },
-  loginScroll: { flexGrow: 1, justifyContent: 'center', padding: 20, paddingBottom: 40 },
-
+  loginSafe: { flex: 1, backgroundColor: COR.laranjaEsc },
+  loginScroll: { flexGrow: 1, justifyContent: 'center', padding: 20 },
   logoArea: { alignItems: 'center', marginBottom: 28 },
-  logoBox: {
-    width: 84, height: 84, borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    alignItems: 'center', justifyContent: 'center',
-    marginBottom: 12, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.3)',
-  },
+  logoBox: { width: 84, height: 84, borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
   logoEmoji: { fontSize: 38 },
   appTitulo: { fontSize: 26, fontWeight: '700', color: '#fff' },
-  appSub:    { fontSize: 14, color: 'rgba(255,255,255,0.75)', marginTop: 4 },
-
-  loginCard: {
-    backgroundColor: COR.card, borderRadius: 22, padding: 22,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.2, shadowRadius: 20, elevation: 10,
-  },
-
-  tabs:             { flexDirection: 'row', backgroundColor: '#f5ede3', borderRadius: 12, padding: 4, marginBottom: 20 },
-  tabBtn:           { flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center' },
-  tabBtnAtivo:      { backgroundColor: '#fff', shadowColor: COR.laranja, shadowOpacity: 0.15, shadowRadius: 4, elevation: 2 },
-  tabBtnTexto:      { fontSize: 14, fontWeight: '600', color: '#8a6a4a' },
+  appSub: { fontSize: 14, color: 'rgba(255,255,255,0.75)', marginTop: 4 },
+  loginCard: { backgroundColor: COR.card, borderRadius: 22, padding: 22, elevation: 10 },
+  tabs: { flexDirection: 'row', backgroundColor: '#f5ede3', borderRadius: 12, padding: 4, marginBottom: 20 },
+  tabBtn: { flex: 1, paddingVertical: 10, borderRadius: 9, alignItems: 'center' },
+  tabBtnAtivo: { backgroundColor: '#fff', elevation: 2 },
+  tabBtnTexto: { fontSize: 14, fontWeight: '600', color: '#8a6a4a' },
   tabBtnTextoAtivo: { color: COR.laranja },
-
-  erroBox:   { backgroundColor: '#fff5f5', borderWidth: 1, borderColor: '#fecaca', borderRadius: 9, padding: 10, marginBottom: 14 },
+  erroBox: { backgroundColor: '#fff5f5', borderWidth: 1, borderColor: '#fecaca', borderRadius: 9, padding: 10, marginBottom: 14 },
   erroTexto: { color: '#b91c1c', fontSize: 13 },
-  okBox:     { backgroundColor: '#f0fdf4', borderWidth: 1, borderColor: '#bbf7d0', borderRadius: 9, padding: 10, marginBottom: 14 },
-  okTexto:   { color: '#15803d', fontSize: 13 },
-
-  // ── REQUISITOS ─────────────────────────────
-  requisitoBox:         { backgroundColor: '#fdf8f3', borderWidth: 1, borderColor: '#e8d5be', borderRadius: 10, padding: 12, marginBottom: 14 },
-  requisitoLinha:       { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
-  requisitoTexto:       { fontSize: 12, fontWeight: '500' },
-  requisitoAtendido:    { color: '#16a34a' },
+  requisitoBox: { backgroundColor: '#fdf8f3', borderWidth: 1, borderColor: '#e8d5be', borderRadius: 10, padding: 12, marginBottom: 14 },
+  requisitoLinha: { flexDirection: 'row', alignItems: 'center', marginBottom: 6 },
+  requisitoTexto: { fontSize: 12, fontWeight: '500' },
+  requisitoAtendido: { color: '#16a34a' },
   requisitoNaoAtendido: { color: '#9a7560' },
-
-  // ── INPUTS ─────────────────────────────────
-  campoWrap:    { marginBottom: 14 },
-  campoLabel:   { fontSize: 11, fontWeight: '700', color: '#8a6a4a', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.4 },
-  campoLinha:   { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fdf8f3', borderWidth: 1.5, borderColor: '#e8d5be', borderRadius: 10 },
-  input:        { flex: 1, paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 13 : 10, fontSize: 15, color: COR.marrom },
-  campoDirWrap: { paddingHorizontal: 12, justifyContent: 'center', alignItems: 'center' },
-
-  btnPrimario:      { backgroundColor: COR.laranja, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 6 },
-  btnDesabilitado:  { opacity: 0.5 },
-  btnPrimarioTexto: { color: '#fff', fontWeight: '700', fontSize: 15, letterSpacing: 0.5 },
-
-  // ── TOPO ───────────────────────────────────
-  topBar:      { backgroundColor: COR.laranjaEsc, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12 },
-  topTitulo:   { color: '#fff', fontSize: 16, fontWeight: '700' },
-  topEmail:    { color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 2 },
-  btnSair:     { backgroundColor: 'rgba(255,255,255,0.2)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 7 },
-  btnSairTexto:{ color: '#fff', fontWeight: '700', fontSize: 13 },
-
-  // ── NAVBAR ─────────────────────────────────
-  navBar:        { flexDirection: 'row', backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#e8d5be' },
-  navItem:       { flex: 1, alignItems: 'center', paddingVertical: 10 },
-  navItemAtivo:  { borderTopWidth: 2, borderTopColor: COR.laranja },
-  navIcone:      { fontSize: 22 },
-  navLabel:      { fontSize: 11, color: '#b08060', marginTop: 2, fontWeight: '500' },
-  navLabelAtivo: { color: COR.laranja, fontWeight: '700' },
-
-  // ── TELA PRINCIPAL ─────────────────────────
+  campoWrap: { marginBottom: 14 },
+  campoLabel: { fontSize: 11, fontWeight: '700', color: '#8a6a4a', marginBottom: 6, textTransform: 'uppercase' },
+  campoLinha: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#fdf8f3', borderWidth: 1.5, borderColor: '#e8d5be', borderRadius: 10 },
+  input: { flex: 1, paddingHorizontal: 14, paddingVertical: Platform.OS === 'ios' ? 13 : 10, fontSize: 15, color: COR.marrom },
+  campoDirWrap: { paddingHorizontal: 12, justifyContent: 'center' },
+  btnPrimario: { backgroundColor: COR.laranja, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 6 },
+  btnDesabilitado: { opacity: 0.5 },
+  btnPrimarioTexto: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  mainSafe: { flex: 1, backgroundColor: COR.fundo },
   mainScroll: { padding: 16 },
-
-  secaoTitulo:   { fontSize: 17, fontWeight: '700', color: COR.marrom, marginBottom: 12, marginTop: 8 },
-  listaHeader:   { flexDirection: 'row', alignItems: 'center', marginTop: 20, marginBottom: 12 },
+  topBar: { backgroundColor: COR.laranjaEsc, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 13 },
+  topEmail: { flex: 1, color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '500' },
+  btnSair: { backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 8, paddingHorizontal: 14, paddingVertical: 7 },
+  btnSairTexto: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  secaoTitulo: { fontSize: 17, fontWeight: '700', color: COR.marrom, marginBottom: 12, marginTop: 8 },
+  listaHeader: { flexDirection: 'row', alignItems: 'center', marginTop: 20, marginBottom: 12 },
   contadorBadge: { backgroundColor: '#f5ede3', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, marginLeft: 8 },
   contadorTexto: { color: COR.laranja, fontSize: 12, fontWeight: '700' },
-
-  formCard: {
-    backgroundColor: COR.card, borderRadius: 16, padding: 16,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06, shadowRadius: 8, elevation: 3,
-  },
+  formCard: { backgroundColor: COR.card, borderRadius: 16, padding: 16, elevation: 3 },
   linha2: { flexDirection: 'row' },
-
-  totalBox:   { backgroundColor: COR.laranja, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 16, marginVertical: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  totalLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 14, fontWeight: '600' },
+  seletorMaterial: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fdf8f3',
+    borderWidth: 1.5,
+    borderColor: '#e8d5be',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: Platform.OS === 'ios' ? 13 : 10,
+    marginBottom: 14,
+  },
+  seletorMaterialTexto: { flex: 1, fontSize: 15, color: COR.marrom },
+  seletorMaterialIcone: { fontSize: 12, color: COR.laranja, fontWeight: '700' },
+  modalListaBox: { backgroundColor: COR.card, borderRadius: 20, width: '90%', maxHeight: '70%', elevation: 12, overflow: 'hidden' },
+  modalListaHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 1, borderBottomColor: '#f0f0f0' },
+  modalListaTitulo: { fontSize: 17, fontWeight: '700', color: COR.marrom },
+  modalListaFechar: { fontSize: 18, color: '#aaa', fontWeight: '700' },
+  modalListaScroll: { padding: 10 },
+  modalListaItem: { flexDirection: 'row', alignItems: 'center', padding: 15, borderRadius: 10, marginBottom: 4 },
+  modalListaItemAtivo: { backgroundColor: '#fdf8f3' },
+  modalListaItemTexto: { flex: 1, fontSize: 15, color: COR.marrom },
+  modalListaItemTextoAtivo: { color: COR.laranja, fontWeight: '700' },
+  modalListaItemCheck: { color: COR.laranja, fontSize: 16, fontWeight: '700' },
+  totalBox: { backgroundColor: COR.laranja, borderRadius: 12, paddingVertical: 14, paddingHorizontal: 16, marginVertical: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  totalLabel: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  totalSubLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 11, fontWeight: '600' },
   totalValor: { color: '#fff', fontSize: 22, fontWeight: '700' },
-
-  btnSalvar:      { backgroundColor: COR.marrom, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
-  btnSalvarTexto: { color: '#fff', fontWeight: '700', fontSize: 14, letterSpacing: 0.4 },
-
-  estadoVazio:      { alignItems: 'center', paddingVertical: 50 },
-  estadoVazioIcone: { fontSize: 42, marginBottom: 10 },
-  estadoVazioTexto: { color: '#b08060', fontSize: 14 },
-
-  // ── CARD DE ITEM ───────────────────────────
-  itemCard: {
-    backgroundColor: COR.card, borderRadius: 14, padding: 14, marginBottom: 10,
-    flexDirection: 'row', alignItems: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4, elevation: 2,
-  },
-  itemInfo:   { flex: 1 },
-  itemTotal:  { fontSize: 19, fontWeight: '700', color: COR.laranja, marginBottom: 4 },
-  itemLinha:  { fontSize: 13, color: '#7a5a3a', marginTop: 2 },
-  itemData:   { fontSize: 11, color: '#bba080', marginTop: 8, fontStyle: 'italic' },
-  itemAcoes:  { alignItems: 'center', marginLeft: 10 },
-
-  btnEnviarCard:      { backgroundColor: COR.verdeClr, borderWidth: 1, borderColor: COR.verdeBorda, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, alignItems: 'center', marginBottom: 8, minWidth: 62 },
-  btnEnviarCardIcone: { fontSize: 16, color: COR.verde },
-  btnEnviarCardTexto: { fontSize: 10, fontWeight: '700', color: COR.verde, marginTop: 2 },
-
-  btnDeletar:      { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff0f0', borderWidth: 1, borderColor: '#fca5a5', alignItems: 'center', justifyContent: 'center' },
+  modalListaItemSub: { fontSize: 12, color: '#8a6a4a', marginTop: 2 },
+  btnSalvar: { backgroundColor: COR.marrom, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
+  btnSalvarTexto: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  itemCard: { backgroundColor: COR.card, borderRadius: 14, padding: 14, marginBottom: 10, flexDirection: 'row', alignItems: 'center', elevation: 2 },
+  itemInfo: { flex: 1 },
+  itemTotal: { fontSize: 19, fontWeight: '700', color: COR.laranja, marginBottom: 4 },
+  itemLinha: { fontSize: 13, color: '#7a5a3a', marginTop: 2 },
+  itemAcoes: { alignItems: 'center', marginLeft: 10 },
+  btnEnviarCard: { backgroundColor: COR.verdeClr, borderWidth: 1, borderColor: COR.verdeBorda, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7, alignItems: 'center', marginBottom: 8 },
+  btnEnviarCardTexto: { fontSize: 10, fontWeight: '700', color: COR.verde },
+  btnDeletar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#fff0f0', borderWidth: 1, borderColor: '#fca5a5', alignItems: 'center', justifyContent: 'center' },
   btnDeletarTexto: { color: '#ef4444', fontSize: 15, fontWeight: '700' },
-
-  // ── TOAST ──────────────────────────────────
-  toast: {
-    position: 'absolute', bottom: 28, left: 20, right: 20,
-    borderRadius: 12, paddingVertical: 13, paddingHorizontal: 18,
-    shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, elevation: 8,
-  },
+  toast: { position: 'absolute', bottom: 28, left: 20, right: 20, borderRadius: 12, paddingVertical: 13, paddingHorizontal: 18, elevation: 8 },
   toastTexto: { color: '#fff', fontWeight: '600', fontSize: 14, textAlign: 'center' },
-
-  // ── MODAIS ─────────────────────────────────
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', alignItems: 'center', justifyContent: 'center', padding: 24 },
-
-  confirmBox:       { backgroundColor: COR.card, borderRadius: 18, padding: 24, width: '100%', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 20, elevation: 10 },
-  confirmTitulo:    { fontSize: 17, fontWeight: '700', color: COR.marrom, textAlign: 'center', marginBottom: 8 },
-  confirmMsg:       { fontSize: 14, color: '#7a5a3a', textAlign: 'center', marginBottom: 24, lineHeight: 20 },
-  confirmBtns:      { flexDirection: 'row' },
-  btnCancelar:      { flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1.5, borderColor: '#e8d5be', alignItems: 'center', marginRight: 8 },
+  confirmBox: { backgroundColor: COR.card, borderRadius: 18, padding: 24, width: '100%', elevation: 10 },
+  confirmTitulo: { fontSize: 17, fontWeight: '700', color: COR.marrom, textAlign: 'center', marginBottom: 8 },
+  confirmMsg: { fontSize: 14, color: '#7a5a3a', textAlign: 'center', marginBottom: 24 },
+  confirmBtns: { flexDirection: 'row' },
+  btnCancelar: { flex: 1, paddingVertical: 12, borderRadius: 10, borderWidth: 1.5, borderColor: '#e8d5be', alignItems: 'center', marginRight: 8 },
   btnCancelarTexto: { fontSize: 14, fontWeight: '600', color: '#7a5a3a' },
-  btnExcluir:       { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#ef4444', alignItems: 'center' },
-  btnExcluirTexto:  { fontSize: 14, fontWeight: '600', color: '#fff' },
-
-  enviarBox:    { backgroundColor: COR.card, borderRadius: 20, padding: 22, width: '100%', shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 20, elevation: 12 },
+  btnExcluir: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#ef4444', alignItems: 'center' },
+  btnExcluirTexto: { fontSize: 14, fontWeight: '600', color: '#fff' },
+  enviarBox: { backgroundColor: COR.card, borderRadius: 20, padding: 22, width: '100%', elevation: 12 },
   enviarHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   enviarTitulo: { fontSize: 17, fontWeight: '700', color: COR.marrom },
   enviarFechar: { fontSize: 18, color: '#aaa', fontWeight: '700' },
-
-  abas:             { flexDirection: 'row', backgroundColor: '#f5ede3', borderRadius: 10, padding: 4, marginBottom: 16 },
-  abaBtn:           { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
-  abaBtnAtiva:      { backgroundColor: '#fff', shadowColor: COR.laranja, shadowOpacity: 0.15, shadowRadius: 4, elevation: 2 },
-  abaBtnTexto:      { fontSize: 13, fontWeight: '600', color: '#8a6a4a' },
+  abas: { flexDirection: 'row', backgroundColor: '#f5ede3', borderRadius: 10, padding: 4, marginBottom: 16 },
+  abaBtn: { flex: 1, paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
+  abaBtnAtiva: { backgroundColor: '#fff', elevation: 2 },
+  abaBtnTexto: { fontSize: 13, fontWeight: '600', color: '#8a6a4a' },
   abaBtnTextoAtiva: { color: COR.laranja },
-
-  enviarResumo:        { backgroundColor: '#fdf8f3', borderRadius: 12, padding: 14, marginBottom: 18, borderWidth: 1, borderColor: '#e8d5be' },
-  enviarResumoLinha:   { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  enviarResumoLabel:   { fontSize: 12, color: '#8a6a4a', fontWeight: '600' },
-  enviarResumoTotal:   { fontSize: 20, fontWeight: '700', color: COR.laranja },
+  enviarResumo: { backgroundColor: '#fdf8f3', borderRadius: 12, padding: 14, marginBottom: 18, borderWidth: 1, borderColor: '#e8d5be' },
+  enviarResumoLinha: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  enviarResumoLabel: { fontSize: 12, color: '#8a6a4a', fontWeight: '600' },
+  enviarResumoTotal: { fontSize: 20, fontWeight: '700', color: COR.laranja },
   enviarResumoDetalhe: { fontSize: 12, color: '#8a6a4a', lineHeight: 18 },
-
-  enviarCampoLabel: { fontSize: 11, fontWeight: '700', color: '#8a6a4a', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.4 },
-  enviarDica:       { fontSize: 12, color: '#aaa', marginTop: 8, marginBottom: 20, lineHeight: 17 },
-
-  btnEnviar:      { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: COR.verde, alignItems: 'center' },
+  enviarCampoLabel: { fontSize: 11, fontWeight: '700', color: '#8a6a4a', marginBottom: 6, textTransform: 'uppercase' },
+  btnEnviar: { flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: COR.verde, alignItems: 'center' },
   btnEnviarTexto: { fontSize: 14, fontWeight: '700', color: '#fff' },
-
   telPrefixo: { paddingHorizontal: 12, fontSize: 14, fontWeight: '600', color: COR.marrom },
 });
