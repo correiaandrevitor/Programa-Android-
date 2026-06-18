@@ -19,17 +19,12 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-// ─────────────────────────────────────────────
 // FIREBASE CONFIG
-// ─────────────────────────────────────────────
 const API_KEY    = "AIzaSyDA-EfIgc_Ai283VuJHgo86gC3YWovn7pw";
 const PROJECT_ID = "projeto-android-756a1";
 const AUTH_URL   = `https://identitytoolkit.googleapis.com/v1/accounts`;
 const DB_URL     = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
 
-// ─────────────────────────────────────────────
-// CORES
-// ─────────────────────────────────────────────
 const COR = {
   laranja:    '#C97B2A',
   laranjaEsc: '#B5651D',
@@ -245,21 +240,10 @@ function ModalEnviar({ visivel, item, remetente, aoFechar, aoToast }) {
 
   const gerarMensagem = () => {
     const linhas = [
-      '🏷️ *Orçamento de Etiquetas*',
-      '',
-      '━━━━━━━━━━━━━━━━━━━━━',
-      item.material    ? '🧾 *Material:*    ' + item.material    : null,
-      item.largura     ? '↔️ *Largura:*     ' + item.largura + ' cm' : null,
-      item.altura      ? '↕️ *Altura:*      ' + item.altura + ' cm'  : null,
-      '💲 *Preço unit.:* ' + fmtValor(item.precoUnit),
-      '━━━━━━━━━━━━━━━━━━━━━',
-      '💰 *TOTAL: ' + fmtValor(item.total) + '*',
-      '━━━━━━━━━━━━━━━━━━━━━',
-      '',
-      '📅 Data: ' + fmtData(item.criadoEm),
+      'O Orçamento ficará em um Valor Total de: ' + fmtValor(item.total),
       '',
       '_Atenciosamente,_',
-      '_' + remetente + '_',
+      '_Extracola_',
     ].filter((l) => l !== null);
     return linhas.join('\n');
   };
@@ -290,15 +274,32 @@ function ModalEnviar({ visivel, item, remetente, aoFechar, aoToast }) {
   if (!item) return null;
 
   return (
-    <Modal transparent animationType="slide" visible={visivel} onRequestClose={limparEFechar}>
-      <View style={st.overlay}>
-        <View style={st.enviarBox}>
-          <View style={st.enviarHeader}>
-            <Text style={st.enviarTitulo}>📤 Enviar Orçamento</Text>
-            <TouchableOpacity onPress={limparEFechar} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-              <Text style={st.enviarFechar}>✕</Text>
-            </TouchableOpacity>
-          </View>
+  <Modal
+    transparent
+    animationType="slide"
+    visible={visivel}
+    onRequestClose={limparEFechar}
+  >
+    <View style={st.overlay}>
+      <View style={st.enviarBox}>
+
+        <View style={st.enviarHeader}>
+          <Text style={st.enviarTitulo}>
+            📤 Enviar Orçamento
+          </Text>
+
+          <TouchableOpacity
+            onPress={limparEFechar}
+            hitSlop={{
+              top: 10,
+              bottom: 10,
+              left: 10,
+              right: 10,
+            }}
+          >
+            <Text style={st.enviarFechar}>✕</Text>
+          </TouchableOpacity>
+        </View>
 
           <View style={st.enviarResumo}>
             <View style={st.enviarResumoLinha}>
@@ -332,9 +333,62 @@ function ModalEnviar({ visivel, item, remetente, aoFechar, aoToast }) {
             </TouchableOpacity>
           </View>
         </View>
+
+<View style={{ marginTop: 15, alignItems: 'center' }}>
+
+  <View
+    style={{
+      flexDirection: 'row',
+      justifyContent: 'center',
+      gap: 25,
+      marginBottom: 20,
+    }}
+  >
+    <TouchableOpacity
+      onPress={enviarWhatsApp}
+      activeOpacity={0.8}
+    >
+      <Image
+        source={require('./assets/whatsapp.png')}
+        style={{
+          width: 70,
+          height: 70,
+        }}
+        resizeMode="contain"
+      />
+    </TouchableOpacity>
+
+    <TouchableOpacity
+      onPress={enviarEmail}
+      activeOpacity={0.8}
+    >
+      <Image
+        source={require('./assets/e-mail.png')}
+        style={{
+          width: 70,
+          height: 70,
+        }}
+        resizeMode="contain"
+      />
+    </TouchableOpacity>
+  </View>
+
+  <TouchableOpacity
+    style={st.btnCancelar}
+    onPress={limparEFechar}
+    activeOpacity={0.8}
+  >
+    <Text style={st.btnCancelarTexto}>
+      Cancelar
+    </Text>
+  </TouchableOpacity>
+
+</View>
+
       </View>
-    </Modal>
-  );
+    </View>
+  </Modal>
+);
 }
 
 // ─────────────────────────────────────────────
@@ -642,9 +696,7 @@ export default function App() {
   return user ? <TelaOrcamentos user={user} aoSair={() => setUser(null)} /> : <TelaAuth aoLogar={setUser} />;
 }
 
-// ─────────────────────────────────────────────
-// ESTILOS
-// ─────────────────────────────────────────────
+// STYLES
 const st = StyleSheet.create({
   mainSafe: { flex: 1, backgroundColor: COR.fundo },
   authScroll: { flexGrow: 1, justifyContent: 'center', padding: 20 },
